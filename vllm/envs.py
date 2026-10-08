@@ -7911,6 +7911,8 @@ environment_variables: dict[str, Callable[[], Any]] = {
         declared_default="-1",
         effective_default="-1",
         automatic_conditions=(),
+        acceleration_paths=("SM70 cudagraphs",),
+        user_visible=True,
     ),
     "VLLM_SM70_MTP_SPLIT_DRAFT_CUDAGRAPHS": env_var(
         lambda: bool(int(os.getenv("VLLM_SM70_MTP_SPLIT_DRAFT_CUDAGRAPHS", "0"))),
