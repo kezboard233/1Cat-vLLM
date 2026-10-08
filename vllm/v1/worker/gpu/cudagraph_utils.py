@@ -392,6 +392,16 @@ class CudaGraphManager:
                     continue
 
                 descs = self._capture_descs[mode]
+                if mode == CUDAGraphMode.PIECEWISE:
+                    # Invariant the VRAM preflight below relies on: rungs
+                    # capture in DESCENDING token order, and PIECEWISE and
+                    # FULL share one global graph pool, so smaller rungs (and
+                    # the later, small FULL decode graphs) reuse blocks freed
+                    # after each capture instead of growing the pool.
+                    assert all(
+                        descs[i].num_tokens >= descs[i + 1].num_tokens
+                        for i in range(len(descs) - 1)
+                    ), "PIECEWISE capture must run descending for the preflight"
                 if is_global_first_rank():
                     descs = tqdm(descs, desc=f"{progress_bar_desc} ({mode.name})")
                 with sm70_decode_graph_compilation(mode == CUDAGraphMode.FULL):
@@ -400,7 +410,8 @@ class CudaGraphManager:
                             # Mixed-batch ladder rungs are optional coverage:
                             # truncate to free VRAM instead of failing to boot
                             # or starving the (small) FULL decode graphs that
-                            # capture after this loop. The graph pool is
+                            # capture after this loop (no regression vs today:
+                            # an OOM there crashed the boot before this PR too). The graph pool is
                             # shared: pool high-water grows with the LARGEST
                             # captured rung, not the sum of rungs (measured
                             # 2.14 GiB total for a 64..8192 ladder on
