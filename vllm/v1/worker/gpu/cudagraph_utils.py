@@ -398,15 +398,28 @@ class CudaGraphManager:
                     # FULL share one global graph pool, so smaller rungs (and
                     # the later, small FULL decode graphs) reuse blocks freed
                     # after each capture instead of growing the pool.
-                    assert all(
-                        descs[i].num_tokens >= descs[i + 1].num_tokens
+                    if any(
+                        descs[i].num_tokens < descs[i + 1].num_tokens
                         for i in range(len(descs) - 1)
-                    ), "PIECEWISE capture must run descending for the preflight"
+                    ):
+                        raise RuntimeError(
+                            "PIECEWISE capture must run in descending token "
+                            "order for the VRAM preflight to bound the tail."
+                        )
                 if is_global_first_rank():
                     descs = tqdm(descs, desc=f"{progress_bar_desc} ({mode.name})")
                 with sm70_decode_graph_compilation(mode == CUDAGraphMode.FULL):
                     for desc in descs:
-                        if mode == CUDAGraphMode.PIECEWISE and desc.num_tokens > 32:
+                        _ladder_base_top = getattr(
+                            self.vllm_config.compilation_config,
+                            "sm70_piecewise_ladder_base_top",
+                            None,
+                        )
+                        if (
+                            mode == CUDAGraphMode.PIECEWISE
+                            and _ladder_base_top is not None
+                            and desc.num_tokens > _ladder_base_top
+                        ):
                             # Mixed-batch ladder rungs are optional coverage:
                             # truncate to free VRAM instead of failing to boot
                             # or starving the (small) FULL decode graphs that
@@ -427,7 +440,12 @@ class CudaGraphManager:
                                     self.vllm_config.model_config.hf_text_config.hidden_size
                                 )
                             except Exception:
-                                pass
+                                logger.warning_once(
+                                    "SM70 piecewise ladder preflight could not "
+                                    "resolve hidden_size; assuming 8192 "
+                                    "(conservative over-estimate)."
+                                )
+                                hidden = 8192
                             est_b = int(
                                 desc.num_tokens
                                 * (hidden / 5120)
@@ -435,14 +453,22 @@ class CudaGraphManager:
                                 * (1024 * 1024)
                             )
                             if est_b * 2 + (512 << 20) > free_b:
-                                logger.info_once(
-                                    "Skipping PIECEWISE cudagraph rungs >= %d "
-                                    "tokens (estimated ~%.2f GiB pool growth "
-                                    "with margin, %.2f GiB free); smaller rungs "
-                                    "and all FULL decode graphs still capture.",
+                                kept = [
+                                    d.num_tokens
+                                    for d in descs
+                                    if d.num_tokens < desc.num_tokens
+                                ]
+                                logger.warning(
+                                    "SM70 piecewise ladder truncated by free "
+                                    "VRAM: skipping auto rungs >= %d tokens "
+                                    "(estimated ~%.2f GiB pool growth with "
+                                    "margin, %.2f GiB free). Effective auto "
+                                    "rungs: %s. Base sizes and FULL decode "
+                                    "graphs are unaffected.",
                                     desc.num_tokens,
                                     (est_b * 2 + (512 << 20)) / (1 << 30),
                                     free_b / (1 << 30),
+                                    kept or "none",
                                 )
                                 break
                         # Prepare inputs and get forward function

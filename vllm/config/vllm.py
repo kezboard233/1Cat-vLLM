@@ -438,6 +438,11 @@ def _sm70_piecewise_ladder_rungs(
     setting = envs.VLLM_SM70_PIECEWISE_LADDER
     if setting == 0:
         return capture_sizes
+    if setting < -1:
+        raise ValueError(
+            f"VLLM_SM70_PIECEWISE_LADDER must be -1 (auto), 0 (off), or a "
+            f"positive token cap, got {setting}."
+        )
     top_cap = setting if setting > 0 else int(max_num_batched_tokens)
     if top_cap <= max(capture_sizes, default=0):
         return capture_sizes
@@ -2311,12 +2316,22 @@ class VllmConfig:
                             "Using SM70 no-MTP decode cudagraph request shapes %s.",
                             tuple(cudagraph_capture_sizes),
                         )
+                    _ladder_base_top = max(cudagraph_capture_sizes)
                     self.compilation_config.cudagraph_capture_sizes = (
                         _sm70_piecewise_ladder_rungs(
                             cudagraph_capture_sizes,
                             self.scheduler_config.max_num_batched_tokens,
                         )
                     )
+                    if len(self.compilation_config.cudagraph_capture_sizes) > len(
+                        cudagraph_capture_sizes
+                    ):
+                        # Mark which sizes were auto-appended so the runner's
+                        # VRAM preflight guards ONLY these rungs; base sizes
+                        # and user-explicit size lists are never truncated.
+                        self.compilation_config.sm70_piecewise_ladder_base_top = (
+                            _ladder_base_top
+                        )
                 if self.compilation_config.max_cudagraph_capture_size is None:
                     self.compilation_config.max_cudagraph_capture_size = (
                         _sm70_max_cudagraph_capture_size(

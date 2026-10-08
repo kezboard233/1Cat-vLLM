@@ -516,7 +516,7 @@ if TYPE_CHECKING:
     VLLM_SM70_MTP_PROFILE: bool = False
     VLLM_SM70_MTP_PROFILE_INTERVAL: int = 16
     VLLM_SM70_MTP_SPLIT_DRAFT_CUDAGRAPHS: bool = False
-    VLLM_SM70_PIECEWISE_LADDER: int = -1
+    VLLM_SM70_PIECEWISE_LADDER: int = 0
     VLLM_SM70_MTP_CONCURRENCY_WARMUP: bool = False
     VLLM_SM70_MTP_CONTEXT_BUCKETS: str | None = None
     VLLM_SM70_DSV4_DECODE_CONTEXT_BUCKETS: str | None = None
@@ -7897,19 +7897,20 @@ environment_variables: dict[str, Callable[[], Any]] = {
         user_visible=False,
     ),
     "VLLM_SM70_PIECEWISE_LADDER": env_var(
-        lambda: int(os.getenv("VLLM_SM70_PIECEWISE_LADDER", "-1")),
+        lambda: int(os.getenv("VLLM_SM70_PIECEWISE_LADDER", "0")),
         description=(
             "Extends SM70 cudagraph capture sizes with power-of-two "
             "piecewise rungs above the uniform-decode window, up to "
             "max_num_batched_tokens, so mixed prefill+decode steps find a "
-            "PIECEWISE graph instead of running fully eager. -1 (default) "
-            "enables auto sizing; 0 disables; a positive value caps the top "
-            "rung in tokens. The runner truncates the ladder to free VRAM "
-            "at capture time."
+            "PIECEWISE graph instead of running fully eager. 0 (default) "
+            "keeps today's behavior; -1 enables auto sizing with a "
+            "free-VRAM-gated ladder; a positive value caps the top rung in "
+            "tokens. The runner truncates auto rungs to free VRAM at "
+            "capture time; base and user-explicit sizes are never guarded."
         ),
         category="configuration",
-        declared_default="-1",
-        effective_default="-1",
+        declared_default="0",
+        effective_default="0",
         automatic_conditions=(),
         acceleration_paths=("SM70 cudagraphs",),
         user_visible=True,
