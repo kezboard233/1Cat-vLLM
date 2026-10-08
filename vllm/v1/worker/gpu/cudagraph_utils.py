@@ -404,13 +404,13 @@ class CudaGraphManager:
                             # shared: pool high-water grows with the LARGEST
                             # captured rung, not the sum of rungs (measured
                             # 2.14 GiB total for a 64..8192 ladder on
-                            # hidden=2560). Estimate the incremental pool cost
+                            # hidden=5120). Estimate the incremental pool cost
                             # as linear in this rung (descending order, so
                             # this bounds everything below it too), scaled by
                             # hidden size, with a 2x margin plus a fixed
                             # floor. Base sizes <= 32 never hit this guard.
                             free_b, _total = torch.cuda.mem_get_info()
-                            hidden = 2560
+                            hidden = 5120
                             try:
                                 hidden = int(
                                     self.vllm_config.model_config.hf_text_config.hidden_size
@@ -419,7 +419,7 @@ class CudaGraphManager:
                                 pass
                             est_b = int(
                                 desc.num_tokens
-                                * (hidden / 2560)
+                                * (hidden / 5120)
                                 * 0.27
                                 * (1024 * 1024)
                             )
