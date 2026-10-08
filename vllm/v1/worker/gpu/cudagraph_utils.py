@@ -396,6 +396,26 @@ class CudaGraphManager:
                     descs = tqdm(descs, desc=f"{progress_bar_desc} ({mode.name})")
                 with sm70_decode_graph_compilation(mode == CUDAGraphMode.FULL):
                     for desc in descs:
+                        if mode == CUDAGraphMode.PIECEWISE:
+                            # Mixed-batch ladder rungs are optional coverage:
+                            # truncate to free VRAM instead of failing to boot
+                            # or starving the (small) FULL decode graphs that
+                            # capture after this loop. descs are sorted
+                            # descending, so one insufficient rung ends the
+                            # whole tail.
+                            free_b, _total = torch.cuda.mem_get_info()
+                            est_b = int(desc.num_tokens * 0.3 * 1024 * 1024)
+                            if est_b * 2 + (512 << 20) > free_b:
+                                logger.info_once(
+                                    "Skipping PIECEWISE cudagraph rungs >= %d "
+                                    "tokens (estimated ~%.2f GiB with margin, "
+                                    "%.2f GiB free); smaller rungs and all "
+                                    "FULL decode graphs still capture.",
+                                    desc.num_tokens,
+                                    (est_b * 2 + (512 << 20)) / (1 << 30),
+                                    free_b / (1 << 30),
+                                )
+                                break
                         # Prepare inputs and get forward function
                         forward_fn, attn_state = create_forward_fn(desc)
 

@@ -421,6 +421,44 @@ def _sm70_max_cudagraph_capture_size(
     return max(size for size in capture_sizes if size <= max_num_batched_tokens)
 
 
+def _sm70_piecewise_ladder_rungs(
+    capture_sizes: list[int],
+    max_num_batched_tokens: int,
+) -> list[int]:
+    """Extend capture sizes with mixed-batch piecewise rungs.
+
+    The decode-window sizes only serve uniform-decode FULL graphs. Mixed
+    prefill+decode steps bucket up to the largest captured size and run
+    fully eager when they exceed it (observed: every 33..8192-token step,
+    up to 280 ms each on V100 TP4). Append powers of two up to
+    min(max_num_batched_tokens, env cap) so those steps find a PIECEWISE
+    graph; the runner-side capture preflight truncates the ladder to free
+    VRAM so smaller GPUs degrade to shorter ladders instead of failing.
+    """
+    setting = envs.VLLM_SM70_PIECEWISE_LADDER
+    if setting == 0:
+        return capture_sizes
+    top_cap = setting if setting > 0 else int(max_num_batched_tokens)
+    if top_cap <= max(capture_sizes, default=0):
+        return capture_sizes
+    rungs = set(capture_sizes)
+    size = 1
+    while size < max(capture_sizes, default=1):
+        size <<= 1
+    while size < top_cap:
+        size <<= 1
+        rungs.add(min(size, top_cap))
+    if rungs != set(capture_sizes):
+        logger.info_once(
+            "Extending SM70 cudagraph capture sizes with piecewise ladder "
+            "rungs up to %d (mixed prefill+decode steps would otherwise run "
+            "fully eager above %d; VLLM_SM70_PIECEWISE_LADDER=0 disables).",
+            top_cap,
+            max(capture_sizes, default=0),
+        )
+    return sorted(rungs)
+
+
 def _sm70_mtp_cudagraph_capture_sizes(
     max_num_seqs: int,
     decode_query_len: int,
@@ -2274,7 +2312,10 @@ class VllmConfig:
                             tuple(cudagraph_capture_sizes),
                         )
                     self.compilation_config.cudagraph_capture_sizes = (
-                        cudagraph_capture_sizes
+                        _sm70_piecewise_ladder_rungs(
+                            cudagraph_capture_sizes,
+                            self.scheduler_config.max_num_batched_tokens,
+                        )
                     )
                 if self.compilation_config.max_cudagraph_capture_size is None:
                     self.compilation_config.max_cudagraph_capture_size = (
